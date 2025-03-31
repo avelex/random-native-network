@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -116,7 +118,42 @@ func main() {
 		log.Fatalf("Failed to marshal public point: %v", err)
 	}
 
-	fmt.Printf("Public: %v\n", hex.EncodeToString(pubBytes))
+	log.Printf("Public: %v\n", hex.EncodeToString(pubBytes))
+
+	if *index == 0 {
+		time.Sleep(2 * time.Second)
+
+		prevBlockHash := "0x0000000000000000000000000000000000000000000000000000000000000000"
+		nextBlockNumber := "1"
+		seed := pedersen_dkg.GetNonce()
+		data := append([]byte(prevBlockHash), []byte(nextBlockNumber)...)
+		data = append(data, seed...)
+
+		hash := sha256.Sum256(data)
+		requestID := hex.EncodeToString(hash[:])
+
+		log.Println("Initiating VRF generation...")
+
+		if err := node.SendAndCollectVrfSignatures(requestID, knownPeers, hash[:]); err != nil {
+			log.Fatalf("Failed to send and collect VRF signatures: %v", err)
+		}
+
+		sig, err := node.RecoverBLSSignature(requestID, hash[:])
+		if err != nil {
+			log.Fatalf("Failed to recover signature: %v", err)
+		}
+
+		log.Printf("Threshold BLS signature: %v\n", hex.EncodeToString(sig))
+
+		if err := node.VerifyBLSSignature(hash[:], sig); err != nil {
+			log.Fatalf("Failed to verify signature: %v", err)
+		}
+
+		log.Println("Signature is valid!")
+
+		randomNumber := node.GenerateRandomNumber(sig)
+		log.Printf("Random number: %v\n", randomNumber)
+	}
 
 	// Keep the program running
 	select {}
@@ -148,6 +185,7 @@ func NewServer(node *dkg.Node) *Server {
 	s.router.HandleFunc("/health", s.handleHealth)
 	s.router.HandleFunc("/deals", s.handleDeals)
 	s.router.HandleFunc("/responses", s.handleResponses)
+	s.router.HandleFunc("/sign_vrf", s.handleSignVrf)
 
 	return s
 }
@@ -156,6 +194,37 @@ func NewServer(node *dkg.Node) *Server {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, "OK")
+}
+
+func (s *Server) handleSignVrf(w http.ResponseWriter, r *http.Request) {
+	type SignVrfRequest struct {
+		Data string `json:"data"`
+	}
+
+	var req SignVrfRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to decode request body: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	data, err := hex.DecodeString(req.Data)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to decode data: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Sign the data
+	signature, err := s.node.Sign(data)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to sign data: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"signature": hex.EncodeToString(signature),
+	})
 }
 
 // handleDeals processes incoming deal bundles and returns response bundles

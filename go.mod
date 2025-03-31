@@ -1,9 +1,8 @@
 module random-network-poc
 
-go 1.21
+go 1.24.0
 
 require (
-	github.com/jonboulle/clockwork v0.4.0
 	github.com/stretchr/testify v1.9.0
 	go.dedis.ch/kyber/v4 v4.0.0-pre2.0.20250219110603-23debab3f61d
 )

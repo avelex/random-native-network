@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"testing"
 
-	clock "github.com/jonboulle/clockwork"
 	"github.com/stretchr/testify/require"
 	"go.dedis.ch/kyber/v4"
 	"go.dedis.ch/kyber/v4/pairing/bn256"
 	"go.dedis.ch/kyber/v4/share"
 	pedersen_dkg "go.dedis.ch/kyber/v4/share/dkg/pedersen"
+	"go.dedis.ch/kyber/v4/sign/bls"
 	"go.dedis.ch/kyber/v4/sign/schnorr"
 	"go.dedis.ch/kyber/v4/sign/tbls"
 	"go.dedis.ch/kyber/v4/util/random"
@@ -25,7 +25,6 @@ type TestNode struct {
 	proto   *pedersen_dkg.Protocol
 	phaser  *pedersen_dkg.TimePhaser
 	board   *TestBoard
-	clock   clock.FakeClock
 }
 
 type TestBoard struct {
@@ -246,4 +245,7 @@ func TestSelfEvictionShareHolder(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, scheme.VerifyRecovered(poly.Commit(), msg, sig))
+
+	blsSchema := bls.NewSchemeOnG1(sigSuite)
+	require.NoError(t, blsSchema.Verify(poly.Commit(), msg, sig))
 }
