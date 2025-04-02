@@ -1,4 +1,4 @@
-# Random Native Network
+# Random Native Network (Proof of Concept)
 
 This blockchain component demonstrates a robust Distributed Key Generation (DKG) protocol with Verifiable Random Function (VRF) capabilities, leveraging BLS threshold signatures for secure randomness generation. This system enables blockchain validators to collectively produce unpredictable, unbiasable, and verifiable random numbers critical for consensus algorithms, validator selection, and fair execution of on-chain applications.
 

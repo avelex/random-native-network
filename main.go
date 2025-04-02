@@ -31,6 +31,12 @@ var knownPeers = []string{
 	"http://localhost:8002",
 }
 
+var knownPeersMap = map[int]string{
+	0: "http://localhost:8000",
+	1: "http://localhost:8001",
+	2: "http://localhost:8002",
+}
+
 func main() {
 	flag.Parse()
 
@@ -50,8 +56,10 @@ func main() {
 		log.Fatalf("Failed to decode nonce: %v", err)
 	}
 
+	board := dkg.NewHttpBoard(uint32(*index), http.DefaultClient, knownPeersMap)
+
 	// Create DKG node
-	node, err := dkg.NewNode(uint32(*index), privKeyBytes, nonceBytes)
+	node, err := dkg.NewNode(uint32(*index), privKeyBytes, nonceBytes, board)
 	if err != nil {
 		log.Fatalf("Failed to create DKG node: %v", err)
 	}
@@ -75,43 +83,17 @@ func main() {
 	}
 	log.Println("All peers are healthy!")
 
-	if err := node.GenerateDeals(); err != nil {
-		log.Fatalf("Failed to generate deals: %v", err)
+	log.Println("Starting DKG protocol")
+	node.StartDKG()
+
+	log.Println("Waiting for DKG to finish")
+	result := <-node.Protocol.WaitEnd()
+
+	if result.Error != nil {
+		log.Fatalf("DKG failed: %v", result.Error)
 	}
 
-	time.Sleep(5 * time.Second)
-
-	log.Println("Deals generated!")
-
-	if err := node.SendDeals(knownPeers); err != nil {
-		log.Fatalf("Failed to send deals: %v", err)
-	}
-
-	log.Println("Deals sent!")
-
-	log.Println("Waiting for others deals for processing...")
-	time.Sleep(10 * time.Second)
-
-	if err := node.ProcessSavedDeals(); err != nil {
-		log.Fatalf("Failed to process saved deals: %v", err)
-	}
-
-	log.Println("Deals processed!")
-
-	if err := node.SendResponse(knownPeers); err != nil {
-		log.Fatalf("Failed to send response: %v", err)
-	}
-
-	log.Println("Response sent!")
-
-	log.Println("Waiting for others responses for processing...")
-	time.Sleep(10 * time.Second)
-
-	if err := node.ProcessResponseBundles(); err != nil {
-		log.Fatalf("Failed to process saved responses: %v", err)
-	}
-
-	log.Println("Responses processed!")
+	node.Result = result.Result
 
 	pubBytes, err := node.Result.Key.Public().MarshalBinary()
 	if err != nil {
@@ -132,7 +114,7 @@ func main() {
 		hash := sha256.Sum256(data)
 		requestID := hex.EncodeToString(hash[:])
 
-		log.Println("Initiating VRF generation...")
+		log.Println("Initiating VRF generation")
 
 		if err := node.SendAndCollectVrfSignatures(requestID, knownPeers, hash[:]); err != nil {
 			log.Fatalf("Failed to send and collect VRF signatures: %v", err)
@@ -185,6 +167,7 @@ func NewServer(node *dkg.Node) *Server {
 	s.router.HandleFunc("/health", s.handleHealth)
 	s.router.HandleFunc("/deals", s.handleDeals)
 	s.router.HandleFunc("/responses", s.handleResponses)
+	s.router.HandleFunc("/justifications", s.handleJustifications)
 	s.router.HandleFunc("/sign_vrf", s.handleSignVrf)
 
 	return s
@@ -253,11 +236,7 @@ func (s *Server) handleDeals(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Process the deal bundle
-	err = s.node.SaveDeal(dealBundle)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to process deal bundle: %v", err), http.StatusInternalServerError)
-		return
-	}
+	s.node.SaveDeal(dealBundle)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -288,10 +267,39 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Process the response bundle
-	if err := s.node.SaveResponseBundle(bundle); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to process response bundle: %v", err), http.StatusInternalServerError)
+	s.node.SaveResponseBundle(bundle)
+
+	// Return success
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleJustifications processes incoming justification bundles
+func (s *Server) handleJustifications(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		log.Println("Handle justification bundle completed")
+	}()
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	// Read the request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read request body: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Decode the justification bundle from the request
+	justificationBundle, err := dkg.JustificationBundleFromJSON(body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to decode justification bundle: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Process the justification bundle
+	s.node.SaveJustificationBundle(justificationBundle)
 
 	// Return success
 	w.WriteHeader(http.StatusOK)

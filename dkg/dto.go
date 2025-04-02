@@ -38,6 +38,21 @@ type ResponseDTO struct {
 	Status      int32  `json:"status"`
 }
 
+// JustificationBundleDTO is a Data Transfer Object for pedersen_dkg.JustificationBundle
+// with JSON tags for serialization
+type JustificationBundleDTO struct {
+	DealerIndex    uint32             `json:"dealerIndex"`
+	Justifications []JustificationDTO `json:"justifications"`
+	SessionID      string             `json:"sessionId"`
+	Signature      string             `json:"signature"`
+}
+
+// JustificationDTO is a Data Transfer Object for pedersen_dkg.Justification
+type JustificationDTO struct {
+	ShareIndex uint32 `json:"shareIndex"`
+	Share      string `json:"share"`
+}
+
 // MarshalDealBundle converts a pedersen_dkg.DealBundle to a DealBundleDTO
 func MarshalDealBundle(bundle *pedersen_dkg.DealBundle) (*DealBundleDTO, error) {
 	dto := &DealBundleDTO{
@@ -200,4 +215,85 @@ func ResponseBundleFromJSON(data []byte) (*pedersen_dkg.ResponseBundle, error) {
 	}
 
 	return UnmarshalResponseBundle(&dto)
+}
+
+// JustificationBundleToJSON converts a pedersen_dkg.JustificationBundle to JSON bytes
+func JustificationBundleToJSON(bundle *pedersen_dkg.JustificationBundle) ([]byte, error) {
+	dto, err := MarshalJustificationBundle(bundle)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(dto)
+}
+
+// JustificationBundleFromJSON converts JSON bytes to a pedersen_dkg.JustificationBundle
+func JustificationBundleFromJSON(data []byte) (*pedersen_dkg.JustificationBundle, error) {
+	var dto JustificationBundleDTO
+	if err := json.Unmarshal(data, &dto); err != nil {
+		return nil, err
+	}
+
+	return UnmarshalJustificationBundle(&dto)
+}
+
+// MarshalJustificationBundle converts a pedersen_dkg.JustificationBundle to a JustificationBundleDTO
+func MarshalJustificationBundle(bundle *pedersen_dkg.JustificationBundle) (*JustificationBundleDTO, error) {
+	dto := &JustificationBundleDTO{
+		DealerIndex:    bundle.DealerIndex,
+		Justifications: make([]JustificationDTO, len(bundle.Justifications)),
+		SessionID:      hex.EncodeToString(bundle.SessionID),
+		Signature:      hex.EncodeToString(bundle.Signature),
+	}
+
+	for i, justification := range bundle.Justifications {
+		share, err := justification.Share.MarshalBinary()
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal share: %w", err)
+		}
+		dto.Justifications[i] = JustificationDTO{
+			ShareIndex: justification.ShareIndex,
+			Share:      hex.EncodeToString(share),
+		}
+	}
+
+	return dto, nil
+}
+
+// UnmarshalJustificationBundle converts a JustificationBundleDTO to a pedersen_dkg.JustificationBundle
+func UnmarshalJustificationBundle(dto *JustificationBundleDTO) (*pedersen_dkg.JustificationBundle, error) {
+	sessionID, err := hex.DecodeString(dto.SessionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode session ID: %w", err)
+	}
+
+	signature, err := hex.DecodeString(dto.Signature)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode signature: %w", err)
+	}
+
+	bundle := &pedersen_dkg.JustificationBundle{
+		DealerIndex:    dto.DealerIndex,
+		Justifications: make([]pedersen_dkg.Justification, len(dto.Justifications)),
+		SessionID:      sessionID,
+		Signature:      signature,
+	}
+
+	for i, justificationDTO := range dto.Justifications {
+		share, err := hex.DecodeString(justificationDTO.Share)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode share: %w", err)
+		}
+
+		scalar := Suite.Scalar()
+		if err := scalar.UnmarshalBinary(share); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal share: %w", err)
+		}
+
+		bundle.Justifications[i] = pedersen_dkg.Justification{
+			ShareIndex: justificationDTO.ShareIndex,
+			Share:      scalar,
+		}
+	}
+
+	return bundle, nil
 }
