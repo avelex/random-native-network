@@ -1,128 +1,121 @@
 # Random Native Network (Proof of Concept)
 
-This blockchain component demonstrates a robust Distributed Key Generation (DKG) protocol with Verifiable Random Function (VRF) capabilities, leveraging BLS threshold signatures for secure randomness generation. This system enables blockchain validators to collectively produce unpredictable, unbiasable, and verifiable random numbers critical for consensus algorithms, validator selection, and fair execution of on-chain applications.
+## Overview
 
-## Demo
+Random Native Network is a blockchain platform designed to provide secure, unbiasable, and verifiable randomness as a service. This proof-of-concept implementation demonstrates a comprehensive random number generation system built directly into the blockchain protocol, leveraging threshold cryptography and BLS signatures.
 
 ![Random Network Demo](assets/screen.png)
 
-## Blockchain Architecture Components
+## Key Features
 
-### Core Functionality
+### Distributed Key Generation (DKG)
 
-1. **Distributed Key Generation (DKG)**
-   - Utilizes Pedersen DKG protocol for secure distributed key generation
-   - Implements threshold cryptography (t-of-n) for Byzantine fault tolerance
-   - Preserves security even when up to t-1 validators are compromised
+The platform implements Pedersen's DKG protocol with libp2p networking to establish a distributed cryptographic setup where:
 
-2. **Verifiable Random Function (VRF)**
-   - Leverages BLS threshold signatures to generate verifiable randomness
-   - Ensures unpredictability and non-manipulability properties
-   - Provides on-chain verifiability of generated random values
-   - Protects against validator collusion and randomness manipulation
+- Validators collectively generate a shared public key while individually maintaining private key shares
+- The t-of-n threshold scheme ensures Byzantine fault tolerance
+- The system remains secure even when up to t-1 validators are compromised
+- No single entity can reconstruct the private key or bias the randomness generation
 
-3. **Consensus Integration**
-   - Produces deterministic randomness from block data
-   - Support for secure validator selection and committee formation
-   - Enables fair execution of random-dependent protocols
+### Verifiable Random Function (VRF)
 
-## System Requirements
+Our implementation uses BLS threshold signatures to create a VRF system that guarantees:
 
-- Go 1.24 or higher
+- **Unpredictability**: Future random values cannot be determined in advance
+- **Unbiasability**: No participant can manipulate the output
+- **Verifiability**: Anyone can verify the correctness of generated random values
+- **Determinism**: Same inputs produce identical random outputs
+
+### libp2p Networking Layer
+
+The system leverages libp2p for peer-to-peer communication:
+
+- **PubSub Messaging**: Efficient topic-based publish/subscribe for DKG protocol messages
+- **Peer Discovery**: Automatic validator node discovery and connection establishment
+- **NAT Traversal**: Communication across diverse network topologies
+- **Message Authentication**: Cryptographic verification of all protocol messages
+
+The Pedersen DKG messages (deals, responses, and justifications) are exchanged via dedicated libp2p pubsub topics, ensuring reliable and consistent message delivery across the validator network.
+
+## Technical Requirements
+
+- Go 1.24+
+- libp2p networking stack
+- Secure private key management
 - Network connectivity between validator nodes
-- Secure key management for private key shares
 
-## Validator Node Setup
+## Validator Configuration
 
-The system requires at least 3 validator nodes with a 2-of-3 threshold configuration. Each validator needs:
-- A unique index (0, 1, or 2)
-- Securely generated private key
-- Synchronized nonce value across all validators
-- Dedicated network port for P2P communication
+The current implementation supports a 2-of-3 threshold configuration with the following validator setup:
 
-### Validator Key Configuration
+| Node | Private Key |
+|------|-------------|
+| 0    | `6b865eeebef3a3ad47a6bb43d9c7f6a8b7bd3dca5f508a9842fb8c4f549ef2d1` |
+| 1    | `8c0c2e94d80a74e8875a5d1048cc308a4fdc2bd737bf0c9383d4d786b1b35be3` |
+| 2    | `4d3bd130a9b481a01c84ae3b99339a32237d5294f6298d0257fbc625e00bda33` |
 
-Validator private keys and the shared nonce are defined in the `nodes` file:
+**Network Nonce**: `fc25646dfb70219cc0dfeb4f9bdfb4fba33c1fec6b0dc654cdeb7eb5dacde7f6`
 
-| Validator | Private Key | Port |
-|-----------|-------------|------|
-| Node 0 | `6b865eeebef3a3ad47a6bb43d9c7f6a8b7bd3dca5f508a9842fb8c4f549ef2d1` | 8000 |
-| Node 1 | `8c0c2e94d80a74e8875a5d1048cc308a4fdc2bd737bf0c9383d4d786b1b35be3` | 8001 |
-| Node 2 | `4d3bd130a9b481a01c84ae3b99339a32237d5294f6298d0257fbc625e00bda33` | 8002 |
+## Running Validator Nodes
 
-**Shared Network Nonce:** `fc25646dfb70219cc0dfeb4f9bdfb4fba33c1fec6b0dc654cdeb7eb5dacde7f6`
+Launch validator nodes with the following commands:
 
-### Validator Node Deployment
-
-Deploy validator nodes with their respective configurations:
-
-**Validator 0** (Primary coordinator):
+**Primary Node (0)**:
 ```bash
-go run main.go -index 0 -pk 6b865eeebef3a3ad47a6bb43d9c7f6a8b7bd3dca5f508a9842fb8c4f549ef2d1 -nonce fc25646dfb70219cc0dfeb4f9bdfb4fba33c1fec6b0dc654cdeb7eb5dacde7f6 -http_port 8000
+go run main.go -index 0 -pk 6b865eeebef3a3ad47a6bb43d9c7f6a8b7bd3dca5f508a9842fb8c4f549ef2d1 -nonce fc25646dfb70219cc0dfeb4f9bdfb4fba33c1fec6b0dc654cdeb7eb5dacde7f6
 ```
 
-**Validator 1**:
+**Secondary Nodes**:
 ```bash
-go run main.go -index 1 -pk 8c0c2e94d80a74e8875a5d1048cc308a4fdc2bd737bf0c9383d4d786b1b35be3 -nonce fc25646dfb70219cc0dfeb4f9bdfb4fba33c1fec6b0dc654cdeb7eb5dacde7f6 -http_port 8001
+go run main.go -index 1 -pk 8c0c2e94d80a74e8875a5d1048cc308a4fdc2bd737bf0c9383d4d786b1b35be3 -nonce fc25646dfb70219cc0dfeb4f9bdfb4fba33c1fec6b0dc654cdeb7eb5dacde7f6
 ```
 
-**Validator 2**:
 ```bash
-go run main.go -index 2 -pk 4d3bd130a9b481a01c84ae3b99339a32237d5294f6298d0257fbc625e00bda33 -nonce fc25646dfb70219cc0dfeb4f9bdfb4fba33c1fec6b0dc654cdeb7eb5dacde7f6 -http_port 8002
+go run main.go -index 2 -pk 4d3bd130a9b481a01c84ae3b99339a32237d5294f6298d0257fbc625e00bda33 -nonce fc25646dfb70219cc0dfeb4f9bdfb4fba33c1fec6b0dc654cdeb7eb5dacde7f6
 ```
 
-## Protocol Flow
+## Protocol Workflow
 
-### Phase 1: Distributed Key Generation
+### DKG Phase
 
-1. Network initialization and validator health verification
-2. Secure generation and distribution of key shares (deal bundles)
-3. Validation of received deals by each validator
-4. Transmission of response bundles acknowledging valid deals
-5. Verification of response correctness and threshold satisfaction
-6. Finalization of the distributed public key and private shares
+1. **Network Initialization**: Validators establish secure libp2p connections
+2. **Deal Generation**: Each validator generates encrypted key shares for other participants
+3. **Deal Distribution**: Shares are published to the libp2p pubsub topic
+4. **Deal Verification**: Validators verify received deals and send response messages
+5. **Threshold Confirmation**: The system confirms that enough valid responses were received
+6. **Key Finalization**: Public key is established, and validators secure their private shares
 
-### Phase 2: Random Beacon Generation
+### Random Beacon Generation
 
-1. Primary validator (index 0) initiates random beacon round
-2. Input seed derived from blockchain state (previous block hash, height, etc.)
-3. Each validator produces partial BLS signature on the seed
-4. Signatures are collected and verified by the network
-5. Threshold signatures are aggregated into a single BLS signature
-6. Deterministic hash function applied to produce the final random value
-7. Randomness and proof published for on-chain verification
+1. **Beacon Initialization**: Primary node proposes a seed based on blockchain state
+2. **Partial Signing**: Each validator produces a BLS partial signature on the seed
+3. **Signature Collection**: All partial signatures are collected via libp2p
+4. **Aggregation**: Valid signatures are combined into a threshold signature
+5. **Randomness Extraction**: Final random value is derived from the threshold signature
+6. **Verification**: Random value and cryptographic proof are made available on-chain
 
-## API Endpoints
+## Security Properties
 
-The validator nodes expose the following HTTP endpoints:
+- **Distributed Trust**: No single validator can compromise the system
+- **Byzantine Fault Tolerance**: Functions correctly with up to t-1 malicious validators
+- **Cryptographic Verifiability**: All random outputs include cryptographic proofs
+- **Forward Secrecy**: Past random values remain secure even if keys are later compromised
 
-- `/health` - Validator liveness check
-- `/deals` - DKG deal bundle exchange
-- `/responses` - DKG response bundle processing
-- `/sign_vrf` - VRF signature generation endpoint
+## Production Considerations
 
-## Advanced Cryptographic Properties
+For production deployment, additional security measures are recommended:
 
-This implementation provides the following security properties:
-
-1. **Unpredictability:** No validator can predict the random output before the protocol execution.
-2. **Unbiasability:** Validators cannot manipulate the output to their advantage.
-3. **Verifiability:** The correctness of the random value can be verified by any observer.
-4. **Byzantine Fault Tolerance:** The system tolerates up to t-1 malicious validators.
-5. **Forward Secrecy:** Past random values remain secure even if keys are later compromised.
-
-## Security Considerations
-
-While this implementation demonstrates the core concept, production deployments should implement additional security measures:
-
-- TLS encryption for all validator communication
-- Rate limiting and DoS protection for public endpoints
-- Secure validator key management (HSM recommended)
-- Advanced validator authentication mechanisms
-- Comprehensive monitoring and alerting system
+- TLS encryption for all network communication
+- Hardware security modules (HSMs) for key management
+- libp2p private networks with strong peer authentication
+- DoS protection and rate limiting
+- Comprehensive monitoring and alerting
+- Secure key rotation procedures
 
 ## License
 
-This project is licensed under the Apache License 2.0. 
+This project is licensed under the Apache License 2.0.
 
-This software uses the [Kyber](https://github.com/dedis/kyber) cryptographic library which is licensed under the Mozilla Public License 2.0.
+Dependencies:
+- [Kyber](https://github.com/dedis/kyber) cryptographic library (Mozilla Public License 2.0)
+- [libp2p](https://github.com/libp2p/go-libp2p) networking stack (MIT/Apache-2.0 dual license)

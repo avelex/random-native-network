@@ -1,19 +1,18 @@
 package dkg
 
 import (
-	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log"
 	"math/big"
-	"net/http"
-	"strings"
+	"random-network-poc/rng"
+	"sync"
 	"time"
 
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"go.dedis.ch/kyber/v4"
 	"go.dedis.ch/kyber/v4/pairing/bn256"
 	"go.dedis.ch/kyber/v4/share"
@@ -35,15 +34,18 @@ type Node struct {
 	publicKey  kyber.Point
 	phaser     *pedersen_dkg.TimePhaser
 	Protocol   *pedersen_dkg.Protocol
+	rnd        *rng.Protocol
 
-	board *HttpBoard
+	board pedersen_dkg.Board
 
 	Result *pedersen_dkg.Result
 
-	requests map[string][][]byte
+	mu          *sync.Mutex
+	requests    map[string][][]byte
+	requestWait map[string]chan struct{}
 }
 
-func NewNode(index uint32, privKey []byte, nonce []byte, board *HttpBoard) (*Node, error) {
+func NewNode(index uint32, privKey []byte, nonce []byte, board pedersen_dkg.Board, pub *pubsub.PubSub, peerId peer.ID) (*Node, error) {
 	privateKey := Suite.Scalar().SetBytes(privKey)
 	publicKey := Suite.Point().Mul(privateKey, nil)
 
@@ -54,7 +56,6 @@ func NewNode(index uint32, privKey []byte, nonce []byte, board *HttpBoard) (*Nod
 		Longterm:  privateKey,
 		Nonce:     nonce,
 		Auth:      schnorr.NewScheme(Suite),
-		Log:       &Logger{},
 	}
 
 	phaser := pedersen_dkg.NewTimePhaser(1 * time.Second)
@@ -64,66 +65,101 @@ func NewNode(index uint32, privKey []byte, nonce []byte, board *HttpBoard) (*Nod
 		return nil, fmt.Errorf("failed to create dkg protocol: %w", err)
 	}
 
-	return &Node{
-		index:      index,
-		privateKey: privateKey,
-		publicKey:  publicKey,
-		phaser:     phaser,
-		board:      board,
-		Protocol:   protocol,
-		requests:   make(map[string][][]byte),
-	}, nil
+	n := &Node{
+		index:       index,
+		privateKey:  privateKey,
+		publicKey:   publicKey,
+		phaser:      phaser,
+		board:       board,
+		Protocol:    protocol,
+		mu:          &sync.Mutex{},
+		requests:    make(map[string][][]byte),
+		requestWait: make(map[string]chan struct{}),
+	}
+
+	rnd, err := rng.NewProtocol(context.Background(), pub, peerId, n.SignVRF, n.HandleSignature)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create rng protocol: %w", err)
+	}
+
+	n.rnd = rnd
+
+	return n, nil
 }
 
 func (n *Node) StartDKG() {
 	go n.phaser.Start()
 }
 
-// ProcessDealBundle processes a received deal bundle and returns a response bundle
-func (n *Node) SaveDeal(dealBundle *pedersen_dkg.DealBundle) {
-	n.board.ReceiveDealBundle(*dealBundle)
-}
-
-// ProcessResponseBundle processes a received response bundle
-func (n *Node) SaveResponseBundle(responseBundle *pedersen_dkg.ResponseBundle) {
-	// Send response bundle to the specified peer
-	if responseBundle != nil {
-		n.board.ReceiveResponseBundle(*responseBundle)
-	} else {
-		n.board.ReceiveResponseBundle(pedersen_dkg.ResponseBundle{})
+func (n *Node) SignVRF(vrf rng.SignVRF) (rng.Signature, error) {
+	if n.Result == nil {
+		return rng.Signature{}, errors.New("DKG not completed")
 	}
-}
 
-func (n *Node) SaveJustificationBundle(justificationBundle *pedersen_dkg.JustificationBundle) {
-	// Send response bundle to the specified peer
-	n.board.ReceiveJustificationBundle(*justificationBundle)
-}
-
-func (n *Node) SendAndCollectVrfSignatures(requestID string, peerURLs []string, data []byte) error {
-	for _, peerURL := range peerURLs {
-		// Skip sending to self (we'll handle our own response separately)
-		if strings.Contains(peerURL, fmt.Sprintf(":800%d", n.index)) {
-			continue
-		}
-
-		signature, err := n.sendSignVrfRequest(peerURL, data)
-		if err != nil {
-			log.Printf("Failed to send sign VRF request to %s: %v\n", peerURL, err)
-			// Continue with other peers even if one fails
-			continue
-		}
-
-		log.Printf("Received signature from %s: %v\n", peerURL, hex.EncodeToString(signature))
-
-		n.requests[requestID] = append(n.requests[requestID], signature)
+	data, err := hex.DecodeString(vrf.Data)
+	if err != nil {
+		return rng.Signature{}, fmt.Errorf("failed to decode data: %w", err)
 	}
+
+	sig, err := ThresholdBLS.Sign(n.Result.Key.PriShare(), data)
+	if err != nil {
+		return rng.Signature{}, fmt.Errorf("failed to sign data: %w", err)
+	}
+
+	return rng.Signature{
+		RequestID: vrf.RequestID,
+		Signature: hex.EncodeToString(sig),
+	}, nil
+}
+
+func (n *Node) HandleSignature(signature rng.Signature) error {
+	if n.Result == nil {
+		return errors.New("DKG not completed")
+	}
+
+	sig, err := hex.DecodeString(signature.Signature)
+	if err != nil {
+		return fmt.Errorf("failed to decode signature: %w", err)
+	}
+
+	reqID := signature.RequestID
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	n.requests[reqID] = append(n.requests[reqID], sig)
+
+	if len(n.requests[reqID]) >= Threshold {
+		n.requestWait[reqID] <- struct{}{}
+	}
+
+	return nil
+}
+
+func (n *Node) WaitRNGRound(requestID string) <-chan struct{} {
+	return n.requestWait[requestID]
+}
+
+func (n *Node) StartRandomNumberGeneration(requestID string, data []byte) error {
+	if err := n.rnd.Start(requestID, data); err != nil {
+		return fmt.Errorf("failed to start rng protocol: %w", err)
+	}
+
+	n.requestWait[requestID] = make(chan struct{}, 1)
 
 	sig, err := n.Sign(data)
 	if err != nil {
 		return fmt.Errorf("failed to sign data: %w", err)
 	}
 
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
 	n.requests[requestID] = append(n.requests[requestID], sig)
+
+	if len(n.requests[requestID]) >= Threshold {
+		n.requestWait[requestID] <- struct{}{}
+	}
 
 	return nil
 }
@@ -155,47 +191,6 @@ func (n *Node) VerifyBLSSignature(data []byte, signature []byte) error {
 func (n *Node) GenerateRandomNumber(tblsSig []byte) *big.Int {
 	hash := sha256.Sum256(tblsSig)
 	return big.NewInt(0).SetBytes(hash[:])
-}
-
-func (n *Node) sendSignVrfRequest(peerURL string, data []byte) ([]byte, error) {
-	url := peerURL + "/sign_vrf"
-
-	// Convert sign VRF request to JSON
-	requestBytes, err := json.Marshal(map[string]string{
-		"data": hex.EncodeToString(data),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode sign VRF request: %w", err)
-	}
-
-	buf := bytes.NewBuffer(requestBytes)
-
-	resp, err := http.Post(url, "application/json", buf)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send HTTP request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		buf.Reset()
-		if _, err := io.Copy(buf, resp.Body); err != nil {
-			return nil, fmt.Errorf("failed to read response body: %w", err)
-		}
-		return nil, fmt.Errorf("received non-OK response: %s | %d", buf.String(), resp.StatusCode)
-	}
-
-	// Parse response
-	var response map[string]string
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return nil, fmt.Errorf("failed to decode response body: %w", err)
-	}
-
-	signature, ok := response["signature"]
-	if !ok {
-		return nil, errors.New("missing signature in response")
-	}
-
-	return hex.DecodeString(signature)
 }
 
 func (n *Node) Sign(data []byte) ([]byte, error) {

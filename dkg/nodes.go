@@ -7,7 +7,7 @@ import (
 	pedersen_dkg "go.dedis.ch/kyber/v4/share/dkg/pedersen"
 )
 
-const Threshold = 2
+const Threshold = 3
 
 var Nodes = []pedersen_dkg.Node{
 	{

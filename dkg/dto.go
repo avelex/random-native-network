@@ -8,6 +8,70 @@ import (
 	pedersen_dkg "go.dedis.ch/kyber/v4/share/dkg/pedersen"
 )
 
+const (
+	MessageDealBundle          = 1
+	MessageResponseBundle      = 2
+	MessageJustificationBundle = 3
+)
+
+type Message struct {
+	Type int    `json:"type"`
+	Data []byte `json:"data"`
+}
+
+func NewDealBundleMessage(bundle *pedersen_dkg.DealBundle) (*Message, error) {
+	dto, err := MarshalDealBundle(bundle)
+	if err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(dto)
+	if err != nil {
+		return nil, err
+	}
+	return &Message{
+		Type: MessageDealBundle,
+		Data: data,
+	}, nil
+}
+
+func NewResponseBundleMessage(bundle *pedersen_dkg.ResponseBundle) (*Message, error) {
+	dto, err := MarshalResponseBundle(bundle)
+	if err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(dto)
+	if err != nil {
+		return nil, err
+	}
+	return &Message{
+		Type: MessageResponseBundle,
+		Data: data,
+	}, nil
+}
+
+func NewJustificationBundleMessage(bundle *pedersen_dkg.JustificationBundle) (*Message, error) {
+	dto, err := MarshalJustificationBundle(bundle)
+	if err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(dto)
+	if err != nil {
+		return nil, err
+	}
+	return &Message{
+		Type: MessageJustificationBundle,
+		Data: data,
+	}, nil
+}
+
+func ParseMessage(data []byte) (*Message, error) {
+	var msg Message
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return nil, err
+	}
+	return &msg, nil
+}
+
 // DealBundleDTO is a Data Transfer Object for pedersen_dkg.DealBundle
 // with JSON tags for serialization
 type DealBundleDTO struct {
